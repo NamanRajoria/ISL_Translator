@@ -1,0 +1,199 @@
+<!doctype html>
+<html><head>
+<meta charset="utf-8"/>
+<title>Sign Communicator — Letters (84d)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+body{font-family:system-ui,Arial;margin:12px;background:#0f1724;color:#e6eef8}
+.row{display:flex;gap:12px;align-items:flex-start}
+canvas{border-radius:6px;background:#071320}
+.panel{padding:8px;background:#0b1622;border-radius:8px;min-width:260px}
+button{padding:8px 10px;border-radius:6px}
+.big{font-size:40px;font-weight:700}
+kbd{background:#02111a;padding:2px 6px;border-radius:4px}
+</style>
+</head><body>
+<h2>Sign Communicator — Letters demo</h2>
+<div class="row">
+  <div>
+    <video id="video" width="640" height="480" autoplay playsinline style="display:none"></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <div style="margin-top:8px">
+      <button id="start">Start Camera</button>
+      <button id="stop">Stop Camera</button>
+    </div>
+  </div>
+  <div class="panel">
+    <p>Model: <span id="modelStatus">Loading weights...</span></p>
+    <p>Detected: <span id="label" class="big">—</span></p>
+    <p>Confidence: <span id="conf">—</span></p>
+    <p>Word buffer: <span id="buffer" style="font-size:20px"> </span></p>
+    <div style="margin-top:8px">
+      <button id="clear">Clear Buffer</button>
+    </div>
+    <div style="margin-top:12px">
+      <small>Using 2-hand (x,y) features (84 dims). Ensure <code>weights.json</code> is in this folder.</small>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+<script>
+let weights=null, classes=null;
+const video=document.getElementById('video'), canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
+const labelEl=document.getElementById('label'), confEl=document.getElementById('conf'), modelStatus=document.getElementById('modelStatus');
+const bufferEl=document.getElementById('buffer');
+
+const SMOOTH_WINDOW=5;
+let recentPreds=[];
+const HOLD_FRAMES=8, PAUSE_FRAMES=6;
+let holdFrames=0, pauseFrames=0, lastVoted=null, lastConfirmed=null;
+let wordBuffer="";
+
+async function loadWeights(){
+  const names=['weights.json','model-weights.json','model_weights.json'];
+  for(const n of names){
+    try{
+      const r = await fetch(n);
+      if (!r.ok) continue;
+      const d = await r.json();
+      weights = d;
+      classes = d.classes || null;
+      modelStatus.innerText = `Loaded ${ (d.layers||[]).length } layers from ${n}`;
+      return;
+    }catch(e){}
+  }
+  modelStatus.innerText = 'weights.json not found';
+}
+loadWeights();
+
+function denseForward(x,kernel,bias){
+  const inD=kernel.length, outD=kernel[0].length;
+  const out = new Float32Array(outD);
+  for(let j=0;j<outD;j++){
+    let s=0;
+    for(let i=0;i<inD;i++) s += x[i]*kernel[i][j];
+    s += bias[j];
+    out[j]=s;
+  }
+  return out;
+}
+function relu(x){ for(let i=0;i<x.length;i++) if(x[i]<0) x[i]=0; return x; }
+function softmax(x){ let max=-Infinity; for(let i=0;i<x.length;i++) if(x[i]>max) max=x[i]; let s=0; const out=new Float32Array(x.length); for(let i=0;i<x.length;i++){ out[i]=Math.exp(x[i]-max); s+=out[i]; } for(let i=0;i<x.length;i++) out[i]/=s; return out; }
+function argmax(a){ let b=0; for(let i=1;i<a.length;i++) if(a[i]>a[b]) b=i; return b; }
+
+const hands = new Hands({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+hands.setOptions({maxNumHands:2, modelComplexity:1, selfieMode:true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
+hands.onResults(onResults);
+
+document.getElementById('start').onclick = async ()=>{
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480},audio:false});
+    video.srcObject = stream; await video.play(); requestAnimationFrame(tick);
+  }catch(e){ alert('Camera error: '+e.message) }
+};
+document.getElementById('stop').onclick = ()=>{ if(video.srcObject){ video.srcObject.getTracks().forEach(t=>t.stop()); video.srcObject=null; } };
+document.getElementById('clear').onclick = ()=>{ wordBuffer=""; bufferEl.innerText = ""; };
+
+async function tick(){ if(video.readyState>=2) await hands.send({image:video}); requestAnimationFrame(tick); }
+
+function onResults(results){
+  ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.translate(canvas.width,0); ctx.scale(-1,1);
+  if(video.readyState>=2) ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
+    const handsArr = results.multiHandLandmarks;
+    drawLandmarks(handsArr);
+    // convert to pixel coords lists
+    const all_hands_px = handsArr.map(h => h.map(lm => ({x: lm.x * canvas.width, y: lm.y * canvas.height})));
+    const vec = twoHandsXYToVector(all_hands_px); // Float32Array length 84
+    if(weights){
+      let out0 = denseForward(vec, weights.layers[0].kernel, weights.layers[0].bias); out0 = relu(out0);
+      let out1 = denseForward(out0, weights.layers[1].kernel, weights.layers[1].bias); out1 = relu(out1);
+      let out2 = denseForward(out1, weights.layers[2].kernel, weights.layers[2].bias);
+      const probs = softmax(out2); const idx = argmax(probs);
+      const label = (weights.classes && weights.classes[idx]) ? weights.classes[idx] : String(idx);
+      const conf = probs[idx];
+      recentPreds.push({label,conf});
+      if(recentPreds.length>SMOOTH_WINDOW) recentPreds.shift();
+      // majority vote for label
+      const counts={}; for(const p of recentPreds){ counts[p.label] = (counts[p.label]||0)+1; }
+      let voted = recentPreds[recentPreds.length-1].label; let maxc=0;
+      for(const k in counts) if(counts[k]>maxc){ maxc=counts[k]; voted=k; }
+      labelEl.innerText = voted; confEl.innerText = conf.toFixed(3);
+      // hold / pause logic
+      if(conf >= 0.7){
+        if(voted === lastVoted) holdFrames++; else { holdFrames=1; lastVoted = voted; }
+        pauseFrames = 0;
+      } else {
+        pauseFrames++; holdFrames=0; lastVoted = null;
+      }
+      if(holdFrames >= HOLD_FRAMES && lastConfirmed !== voted){
+        wordBuffer += voted;
+        bufferEl.innerText = wordBuffer;
+        lastConfirmed = voted;
+        holdFrames = 0;
+      }
+      if(pauseFrames >= PAUSE_FRAMES){
+        lastConfirmed = null;
+      }
+    }
+  } else {
+    // no hands detected: draw nothing; count as pause
+    pauseFrames++; holdFrames=0; lastVoted=null;
+    if(pauseFrames >= PAUSE_FRAMES) lastConfirmed=null;
+  }
+  ctx.restore();
+}
+
+function twoHandsXYToVector(all_hands_px){
+  // all_hands_px: array of arrays of {x,y} for each hand (21 items)
+  // deterministic ordering by wrist x if 2 present
+  if(all_hands_px.length >= 2){
+    all_hands_px = all_hands_px.sort((a,b)=>a[0].x - b[0].x);
+  }
+  function singleVec(pxs){
+    const wrist = pxs[0];
+    const pts = [];
+    let maxd = 0;
+    for(let i=0;i<pxs.length;i++){
+      const dx = pxs[i].x - wrist.x;
+      const dy = pxs[i].y - wrist.y;
+      pts.push(dx); pts.push(dy);
+      const d = Math.hypot(dx,dy); if(d>maxd) maxd=d;
+    }
+    if(maxd===0) maxd=1;
+    const out = new Float32Array(42);
+    for(let i=0;i<21;i++){ out[i*2] = pts[i*2]/maxd; out[i*2+1] = pts[i*2+1]/maxd; }
+    return out;
+  }
+  const v1 = (all_hands_px.length>=1) ? singleVec(all_hands_px[0]) : new Float32Array(42);
+  const v2 = (all_hands_px.length>=2) ? singleVec(all_hands_px[1]) : new Float32Array(42);
+  const concat = new Float32Array(84);
+  concat.set(v1,0); concat.set(v2,42);
+  return concat;
+}
+
+function drawLandmarks(handsArr){
+  ctx.fillStyle='rgba(0,200,255,0.9)'; ctx.strokeStyle='rgba(0,255,170,0.9)'; ctx.lineWidth=2;
+  const connections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20]];
+  ctx.beginPath();
+  for(const hand of handsArr){
+    for(const c of connections){
+      const a = hand[c[0]], b = hand[c[1]];
+      ctx.moveTo(canvas.width - a.x*canvas.width, a.y*canvas.height);
+      ctx.lineTo(canvas.width - b.x*canvas.width, b.y*canvas.height);
+    }
+  }
+  ctx.stroke();
+  for(const hand of handsArr){
+    for(let i=0;i<hand.length;i++){
+      const p = hand[i];
+      ctx.beginPath(); ctx.arc(canvas.width - p.x*canvas.width, p.y*canvas.height, i===8?6:4,0,Math.PI*2); ctx.fill();
+    }
+  }
+}
+</script>
+</body></html>

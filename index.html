@@ -1,114 +1,189 @@
 <!doctype html>
-<html><head>
+<html lang="en">
+<head>
 <meta charset="utf-8"/>
-<title>Sign Communicator — Letters (84d)</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<!-- Minimal page (no title or extra chrome) for embedding in Framer -->
 <style>
-body{font-family:system-ui,Arial;margin:12px;background:#0f1724;color:#e6eef8}
-.row{display:flex;gap:12px;align-items:flex-start}
-canvas{border-radius:6px;background:#071320}
-.panel{padding:8px;background:#0b1622;border-radius:8px;min-width:260px}
-button{padding:8px 10px;border-radius:6px}
-.big{font-size:40px;font-weight:700}
-kbd{background:#02111a;padding:2px 6px;border-radius:4px}
+  :root{
+    --bg:#0f1724; --panel:#071320; --text:#e6eef8; --muted:#9fb0c6;
+    --accent: #00ffd1;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,Arial;}
+  .wrap{max-width:1200px;margin:12px auto;padding:12px;box-sizing:border-box;}
+  .layout{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;}
+  .camera-area{flex:1 1 640px;min-width:280px;position:relative;border-radius:8px;overflow:hidden;background:var(--panel);}
+  video,canvas{display:block;width:100%;height:auto;max-height:75vh;object-fit:cover;backface-visibility:hidden;}
+  .controls{display:flex;gap:8px;padding:8px;background:transparent;position:absolute;left:12px;bottom:12px;z-index:20;}
+  .controls button{padding:8px 10px;border-radius:8px;border:0;background:rgba(255,255,255,0.06);color:var(--text);backdrop-filter:blur(4px);}
+  .panel{width:320px;min-width:220px;padding:12px;border-radius:8px;background:rgba(11,22,34,0.9);}
+  .labelBig{font-size:56px;font-weight:700;line-height:1;color:var(--accent);letter-spacing:1px;}
+  .small{color:var(--muted);font-size:13px}
+  .buffer{font-size:20px;margin-top:8px;color:var(--text);word-break:break-word}
+  .conf{font-weight:600}
+  .perm-help{padding:10px;border-radius:8px;background:#08111a;color:var(--muted);margin-bottom:8px;display:none}
+  /* mobile adjustments */
+  @media (max-width:760px){
+    .layout{flex-direction:column;}
+    .panel{width:100%;}
+    .labelBig{font-size:44px;text-align:center;}
+  }
 </style>
-</head><body>
-<h2>Sign Communicator — Letters demo</h2>
-<div class="row">
-  <div>
-    <video id="video" width="640" height="480" autoplay playsinline style="display:none"></video>
-    <canvas id="canvas" width="640" height="480"></canvas>
-    <div style="margin-top:8px">
-      <button id="start">Start Camera</button>
-      <button id="stop">Stop Camera</button>
+</head>
+<body>
+<div class="wrap">
+  <div class="layout">
+    <div class="camera-area" id="camWrap">
+      <video id="video" autoplay playsinline muted style="display:none"></video>
+      <canvas id="canvas" width="640" height="480"></canvas>
+
+      <div class="controls" id="controls">
+        <button id="start">Start</button>
+        <button id="stop">Stop</button>
+        <button id="clear">Clear</button>
+      </div>
+
+      <div class="perm-help" id="permHelp">
+        Camera permission appears blocked. Tap <strong>Start</strong> then allow camera in browser settings. If embedded, ensure iframe has <code>allow="camera; microphone"</code>.
+      </div>
     </div>
-  </div>
-  <div class="panel">
-    <p>Model: <span id="modelStatus">Loading weights...</span></p>
-    <p>Detected: <span id="label" class="big">—</span></p>
-    <p>Confidence: <span id="conf">—</span></p>
-    <p>Word buffer: <span id="buffer" style="font-size:20px"> </span></p>
-    <div style="margin-top:8px">
-      <button id="clear">Clear Buffer</button>
-    </div>
-    <div style="margin-top:12px">
-      <small>Using 2-hand (x,y) features (84 dims). Ensure <code>weights.json</code> is in this folder.</small>
+
+    <div class="panel" role="region" aria-label="Detection panel">
+      <div class="small">Detected</div>
+      <div id="label" class="labelBig" aria-live="polite">—</div>
+
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px">
+        <div class="small">Confidence</div>
+        <div id="conf" class="conf">—</div>
+      </div>
+
+      <div style="margin-top:12px">
+        <div class="small">Word buffer</div>
+        <div id="buffer" class="buffer" aria-live="polite"></div>
+      </div>
     </div>
   </div>
 </div>
 
+<!-- mediapipe -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <script>
-let weights=null, classes=null;
-const video=document.getElementById('video'), canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
-const labelEl=document.getElementById('label'), confEl=document.getElementById('conf'), modelStatus=document.getElementById('modelStatus');
-const bufferEl=document.getElementById('buffer');
+/* --- CONFIG --- */
+const MODEL_FILES = ['weights.json','model-weights.json','model_weights.json'];
+const INFER_FPS = 12; // target inference frequency
+const CONFIRM_CONFIDENCE = 0.7;
+const HOLD_FRAMES = 8;
+const PAUSE_FRAMES = 6;
+const SMOOTH_WINDOW = 5;
 
-const SMOOTH_WINDOW=5;
-let recentPreds=[];
-const HOLD_FRAMES=8, PAUSE_FRAMES=6;
-let holdFrames=0, pauseFrames=0, lastVoted=null, lastConfirmed=null;
-let wordBuffer="";
+/* --- DOM --- */
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('start');
+const stopBtn = document.getElementById('stop');
+const clearBtn = document.getElementById('clear');
+const labelEl = document.getElementById('label');
+const confEl = document.getElementById('conf');
+const bufferEl = document.getElementById('buffer');
+const permHelp = document.getElementById('permHelp');
 
+let weights = null;
+let classes = null;
+
+/* --- small helpers --- */
+function postDetection(payload){
+  // notify parent (useful for Framer wrapper)
+  try{ parent.postMessage({type:'DETECTION', payload}, '*'); }catch(e){}
+}
+
+/* --- load weights (lazy) --- */
 async function loadWeights(){
-  const names=['weights.json','model-weights.json','model_weights.json'];
-  for(const n of names){
+  for(const name of MODEL_FILES){
     try{
-      const r = await fetch(n);
-      if (!r.ok) continue;
-      const d = await r.json();
-      weights = d;
-      classes = d.classes || null;
-      modelStatus.innerText = `Loaded ${ (d.layers||[]).length } layers from ${n}`;
+      const res = await fetch(name);
+      if(!res.ok) continue;
+      const j = await res.json();
+      weights = j;
+      classes = j.classes || null;
+      console.log('Loaded weights from', name);
       return;
-    }catch(e){}
+    }catch(e){ console.warn('weights load fail', name, e); }
   }
-  modelStatus.innerText = 'weights.json not found';
+  console.warn('No weights found; model features disabled.');
 }
 loadWeights();
 
+/* --- model math utilities (kept from original) --- */
 function denseForward(x,kernel,bias){
   const inD=kernel.length, outD=kernel[0].length;
   const out = new Float32Array(outD);
   for(let j=0;j<outD;j++){
-    let s=0;
-    for(let i=0;i<inD;i++) s += x[i]*kernel[i][j];
-    s += bias[j];
-    out[j]=s;
-  }
-  return out;
+    let s=0; for(let i=0;i<inD;i++) s += x[i]*kernel[i][j];
+    s += bias[j]; out[j]=s;
+  } return out;
 }
 function relu(x){ for(let i=0;i<x.length;i++) if(x[i]<0) x[i]=0; return x; }
 function softmax(x){ let max=-Infinity; for(let i=0;i<x.length;i++) if(x[i]>max) max=x[i]; let s=0; const out=new Float32Array(x.length); for(let i=0;i<x.length;i++){ out[i]=Math.exp(x[i]-max); s+=out[i]; } for(let i=0;i<x.length;i++) out[i]/=s; return out; }
 function argmax(a){ let b=0; for(let i=1;i<a.length;i++) if(a[i]>a[b]) b=i; return b; }
 
-const hands = new Hands({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-hands.setOptions({maxNumHands:2, modelComplexity:1, selfieMode:true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
+/* --- mediapipe hands setup --- */
+const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+hands.setOptions({ maxNumHands:2, modelComplexity:1, selfieMode:true, minDetectionConfidence:0.5, minTrackingConfidence:0.5 });
 hands.onResults(onResults);
 
-document.getElementById('start').onclick = async ()=>{
+/* --- state for smoothing/hold logic --- */
+let recentPreds = [];
+let holdFrames=0, pauseFrames=0;
+let lastVoted=null, lastConfirmed=null;
+let wordBuffer = '';
+
+/* --- camera control --- */
+startBtn.onclick = async () => {
+  permHelp.style.display='none';
   try{
-    const stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480},audio:false});
-    video.srcObject = stream; await video.play(); requestAnimationFrame(tick);
-  }catch(e){ alert('Camera error: '+e.message) }
+    const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false });
+    video.srcObject = stream;
+    await video.play();
+    lastTick = performance.now();
+    requestAnimationFrame(tick);
+  }catch(e){
+    permHelp.style.display='block';
+    alert('Camera error: '+ (e.message || e.name));
+  }
 };
-document.getElementById('stop').onclick = ()=>{ if(video.srcObject){ video.srcObject.getTracks().forEach(t=>t.stop()); video.srcObject=null; } };
-document.getElementById('clear').onclick = ()=>{ wordBuffer=""; bufferEl.innerText = ""; };
+stopBtn.onclick = ()=>{ if(video.srcObject){ video.srcObject.getTracks().forEach(t=>t.stop()); video.srcObject=null; } };
+clearBtn.onclick = ()=>{ wordBuffer=''; bufferEl.innerText=''; };
 
-async function tick(){ if(video.readyState>=2) await hands.send({image:video}); requestAnimationFrame(tick); }
+/* --- tick throttled to INFER_FPS --- */
+let lastTick = 0;
+async function tick(ts){
+  if(!video) return;
+  requestAnimationFrame(tick);
+  const dt = ts - lastTick;
+  if(dt < (1000/INFER_FPS)) return;
+  lastTick = ts;
+  if(video.readyState >= 2) await hands.send({image: video});
+}
 
+/* --- rendering & inference --- */
 function onResults(results){
+  // canvas sizing responsive
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+
   ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height);
+  // mirror draw
   ctx.translate(canvas.width,0); ctx.scale(-1,1);
-  if(video.readyState>=2) ctx.drawImage(video,0,0,canvas.width,canvas.height);
-  if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
+  if(video.readyState >= 2) ctx.drawImage(video,0,0,canvas.width,canvas.height);
+
+  if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
     const handsArr = results.multiHandLandmarks;
     drawLandmarks(handsArr);
-    // convert to pixel coords lists
     const all_hands_px = handsArr.map(h => h.map(lm => ({x: lm.x * canvas.width, y: lm.y * canvas.height})));
-    const vec = twoHandsXYToVector(all_hands_px); // Float32Array length 84
+    const vec = twoHandsXYToVector(all_hands_px);
     if(weights){
       let out0 = denseForward(vec, weights.layers[0].kernel, weights.layers[0].bias); out0 = relu(out0);
       let out1 = denseForward(out0, weights.layers[1].kernel, weights.layers[1].bias); out1 = relu(out1);
@@ -116,51 +191,57 @@ function onResults(results){
       const probs = softmax(out2); const idx = argmax(probs);
       const label = (weights.classes && weights.classes[idx]) ? weights.classes[idx] : String(idx);
       const conf = probs[idx];
+
       recentPreds.push({label,conf});
-      if(recentPreds.length>SMOOTH_WINDOW) recentPreds.shift();
-      // majority vote for label
-      const counts={}; for(const p of recentPreds){ counts[p.label] = (counts[p.label]||0)+1; }
+      if(recentPreds.length > SMOOTH_WINDOW) recentPreds.shift();
+
+      // majority vote
+      const counts = {}; for(const p of recentPreds) counts[p.label] = (counts[p.label]||0)+1;
       let voted = recentPreds[recentPreds.length-1].label; let maxc=0;
-      for(const k in counts) if(counts[k]>maxc){ maxc=counts[k]; voted=k; }
-      labelEl.innerText = voted; confEl.innerText = conf.toFixed(3);
-      // hold / pause logic
-      if(conf >= 0.7){
-        if(voted === lastVoted) holdFrames++; else { holdFrames=1; lastVoted = voted; }
+      for(const k in counts) if(counts[k] > maxc){ maxc = counts[k]; voted = k; }
+
+      labelEl.innerText = voted;
+      confEl.innerText = conf.toFixed(3);
+
+      if(conf >= CONFIRM_CONFIDENCE){
+        if(voted === lastVoted) holdFrames++; else { holdFrames = 1; lastVoted = voted; }
         pauseFrames = 0;
       } else {
-        pauseFrames++; holdFrames=0; lastVoted = null;
+        pauseFrames++; holdFrames = 0; lastVoted = null;
       }
+
       if(holdFrames >= HOLD_FRAMES && lastConfirmed !== voted){
         wordBuffer += voted;
         bufferEl.innerText = wordBuffer;
         lastConfirmed = voted;
         holdFrames = 0;
+        // notify parent
+        postDetection({label:voted, confidence:conf, time:Date.now()});
       }
       if(pauseFrames >= PAUSE_FRAMES){
         lastConfirmed = null;
       }
+    } else {
+      // no weights: show placeholder
+      labelEl.innerText = '—';
+      confEl.innerText = '—';
     }
   } else {
-    // no hands detected: draw nothing; count as pause
+    // no hands
     pauseFrames++; holdFrames=0; lastVoted=null;
     if(pauseFrames >= PAUSE_FRAMES) lastConfirmed=null;
   }
   ctx.restore();
 }
 
+/* --- utilities for vectorization & drawing (kept mostly intact) --- */
 function twoHandsXYToVector(all_hands_px){
-  // all_hands_px: array of arrays of {x,y} for each hand (21 items)
-  // deterministic ordering by wrist x if 2 present
-  if(all_hands_px.length >= 2){
-    all_hands_px = all_hands_px.sort((a,b)=>a[0].x - b[0].x);
-  }
+  if(all_hands_px.length >= 2) all_hands_px = all_hands_px.sort((a,b)=>a[0].x - b[0].x);
   function singleVec(pxs){
     const wrist = pxs[0];
-    const pts = [];
-    let maxd = 0;
+    const pts=[]; let maxd=0;
     for(let i=0;i<pxs.length;i++){
-      const dx = pxs[i].x - wrist.x;
-      const dy = pxs[i].y - wrist.y;
+      const dx = pxs[i].x - wrist.x, dy = pxs[i].y - wrist.y;
       pts.push(dx); pts.push(dy);
       const d = Math.hypot(dx,dy); if(d>maxd) maxd=d;
     }
@@ -171,8 +252,7 @@ function twoHandsXYToVector(all_hands_px){
   }
   const v1 = (all_hands_px.length>=1) ? singleVec(all_hands_px[0]) : new Float32Array(42);
   const v2 = (all_hands_px.length>=2) ? singleVec(all_hands_px[1]) : new Float32Array(42);
-  const concat = new Float32Array(84);
-  concat.set(v1,0); concat.set(v2,42);
+  const concat = new Float32Array(84); concat.set(v1,0); concat.set(v2,42);
   return concat;
 }
 
@@ -195,5 +275,15 @@ function drawLandmarks(handsArr){
     }
   }
 }
+
+/* --- friendly detection of permission state (simple) --- */
+(async function checkPermission(){
+  if(!navigator.permissions) return;
+  try{
+    const s = await navigator.permissions.query({name:'camera'}).catch(()=>null);
+    if(s && s.state === 'denied') permHelp.style.display='block';
+  }catch(e){}
+})();
 </script>
-</body></html>
+</body>
+</html>

@@ -2,288 +2,502 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<!-- Minimal page (no title or extra chrome) for embedding in Framer -->
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>ISL Connect</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0f1724; --panel:#071320; --text:#e6eef8; --muted:#9fb0c6;
-    --accent: #00ffd1;
+    --bg-color: #f2f4f7;
+    --chat-bg: #ffffff;
+    --primary: #007AFF; /* Tech Blue */
+    --primary-dim: rgba(0, 122, 255, 0.1);
+    --text-dark: #1f2937;
+    --text-grey: #6b7280;
+    --bubble-me: #007AFF;
+    --bubble-them: #E5E7EB;
+    --camera-radius: 24px;
   }
-  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,Arial;}
-  .wrap{max-width:1200px;margin:12px auto;padding:12px;box-sizing:border-box;}
-  .layout{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;}
-  .camera-area{flex:1 1 640px;min-width:280px;position:relative;border-radius:8px;overflow:hidden;background:var(--panel);}
-  video,canvas{display:block;width:100%;height:auto;max-height:75vh;object-fit:cover;backface-visibility:hidden;}
-  .controls{display:flex;gap:8px;padding:8px;background:transparent;position:absolute;left:12px;bottom:12px;z-index:20;}
-  .controls button{padding:8px 10px;border-radius:8px;border:0;background:rgba(255,255,255,0.06);color:var(--text);backdrop-filter:blur(4px);}
-  .panel{width:320px;min-width:220px;padding:12px;border-radius:8px;background:rgba(11,22,34,0.9);}
-  .labelBig{font-size:56px;font-weight:700;line-height:1;color:var(--accent);letter-spacing:1px;}
-  .small{color:var(--muted);font-size:13px}
-  .buffer{font-size:20px;margin-top:8px;color:var(--text);word-break:break-word}
-  .conf{font-weight:600}
-  .perm-help{padding:10px;border-radius:8px;background:#08111a;color:var(--muted);margin-bottom:8px;display:none}
-  /* mobile adjustments */
-  @media (max-width:760px){
-    .layout{flex-direction:column;}
-    .panel{width:100%;}
-    .labelBig{font-size:44px;text-align:center;}
+
+  html,body{height:100%; margin:0; background:var(--bg-color); color:var(--text-dark); font-family:'Inter', sans-serif;}
+  
+  .app{
+    max-width: 480px; /* Mobile First View */
+    margin: 0 auto;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--chat-bg);
+    box-shadow: 0 0 40px rgba(0,0,0,0.1);
   }
+
+  /* --- HEADER --- */
+  .header {
+    padding: 20px;
+    text-align: center;
+    border-bottom: 1px solid #f0f0f0;
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--text-dark);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .status-badge {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: #DCFCE7;
+    color: #166534;
+    font-weight: 600;
+  }
+
+  /* --- CAMERA STAGE --- */
+  .camera-container {
+    position: relative;
+    width: 90%;
+    margin: 20px auto 10px auto;
+    aspect-ratio: 1/1;
+    background: #000;
+    border-radius: var(--camera-radius);
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+  }
+  
+  #canvas { width: 100%; height: 100%; display: block; object-fit: cover; }
+  
+  /* Floating Camera Controls */
+  .cam-controls {
+    position: absolute;
+    bottom: 15px;
+    right: 15px;
+    display: flex;
+    gap: 10px;
+    z-index: 10;
+  }
+  .icon-btn {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.2);
+    backdrop-filter: blur(5px);
+    color: white;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    transition: 0.2s;
+  }
+  .icon-btn:hover { background: rgba(255,255,255,0.4); }
+  .icon-btn.active { background: #EF4444; color: white; }
+
+  /* Buffer / Detection Zone */
+  .prediction-zone {
+    text-align: center;
+    padding: 0 20px;
+    margin-bottom: 10px;
+  }
+  .detecting-label {
+    font-size: 12px; color: var(--text-grey); font-weight: 500; letter-spacing: 1px;
+    text-transform: uppercase; margin-bottom: 4px;
+  }
+  .current-word {
+    font-size: 28px; font-weight: 800; color: var(--text-dark);
+    min-height: 40px;
+  }
+  .buffer-text {
+    font-size: 18px; color: var(--primary); font-weight: 600;
+    margin-top: 5px; min-height: 24px;
+  }
+
+  /* --- CHAT AREA --- */
+  .chat-area {
+    flex: 1;
+    background: #f9fafb;
+    border-top-left-radius: 30px;
+    border-top-right-radius: 30px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-top: 1px solid #eee;
+  }
+  
+  .messages-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  /* Bubbles */
+  .bubble {
+    max-width: 80%;
+    padding: 12px 16px;
+    font-size: 15px;
+    line-height: 1.4;
+    position: relative;
+    animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+  .bubble.me {
+    align-self: flex-end;
+    background: var(--bubble-me);
+    color: white;
+    border-radius: 18px 18px 4px 18px;
+    box-shadow: 0 2px 5px rgba(0,122,255,0.2);
+  }
+  .bubble.them {
+    align-self: flex-start;
+    background: var(--bubble-them);
+    color: var(--text-dark);
+    border-radius: 18px 18px 18px 4px;
+  }
+  
+  @keyframes popIn { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+  /* Input Bar */
+  .input-bar {
+    background: white;
+    padding: 15px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    border-top: 1px solid #f0f0f0;
+  }
+  
+  .text-input {
+    flex: 1;
+    background: #f3f4f6;
+    border: none;
+    padding: 12px 16px;
+    border-radius: 20px;
+    font-size: 15px;
+    outline: none;
+  }
+  
+  .action-btn {
+    width: 44px; height: 44px;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    display: flex; align-items: center; justify-content: center;
+    transition: 0.2s;
+  }
+  .btn-mic { background: #f3f4f6; color: #555; }
+  .btn-mic.listening { background: #fee2e2; color: #ef4444; animation: pulse 1.5s infinite; }
+  
+  /* THE WIZARD OF OZ BUTTON (Add Sign) */
+  .btn-add {
+    background: var(--primary);
+    color: white;
+    box-shadow: 0 4px 10px rgba(0,122,255,0.3);
+  }
+  .btn-add:hover { transform: translateY(-2px); }
+
+  @keyframes pulse { 0% {box-shadow: 0 0 0 0 rgba(239,68,68, 0.4);} 70% {box-shadow: 0 0 0 10px rgba(239,68,68, 0);} 100% {box-shadow: 0 0 0 0 rgba(239,68,68, 0);} }
+
+  /* --- OVERLAY FOR TEACHING --- */
+  .overlay {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.85);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    opacity: 0; pointer-events: none; transition: 0.3s;
+  }
+  .overlay.active { opacity: 1; pointer-events: all; }
+  
+  .ghost-hand {
+    width: 200px; height: 200px;
+    border: 3px dashed rgba(255,255,255,0.3);
+    border-radius: 20px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 20px;
+  }
+  .ghost-text { color: white; font-weight: 600; margin-bottom: 20px; font-size: 20px; }
+  .train-input { 
+    background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); 
+    padding: 10px; color: white; border-radius: 8px; margin-bottom: 20px; text-align: center; font-size: 18px;
+  }
+  .train-btn {
+    background: var(--primary); color: white; border: none; padding: 12px 30px; 
+    border-radius: 30px; font-weight: 700; font-size: 16px; cursor: pointer;
+  }
+
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="layout">
-    <div class="camera-area" id="camWrap">
-      <video id="video" autoplay playsinline muted style="display:none"></video>
-      <canvas id="canvas" width="640" height="480"></canvas>
 
-      <div class="controls" id="controls">
-        <button id="start">Start</button>
-        <button id="stop">Stop</button>
-        <button id="clear">Clear</button>
-      </div>
+<div class="app">
+  <div class="header">
+    <span>ISL Connect</span>
+    <span class="status-badge">● Live</span>
+  </div>
 
-      <div class="perm-help" id="permHelp">
-        Camera permission appears blocked. Tap <strong>Start</strong> then allow camera in browser settings. If embedded, ensure iframe has <code>allow="camera; microphone"</code>.
-      </div>
+  <div class="camera-container">
+    <video id="video" autoplay playsinline muted style="display:none"></video>
+    <canvas id="canvas" width="640" height="640"></canvas>
+    
+    <div class="cam-controls">
+      <button class="icon-btn" id="startBtn" title="Start Camera">▶</button>
+      <button class="icon-btn" id="clearBufferBtn" title="Clear">🗑</button>
+      <button class="icon-btn" id="sendBtn" title="Speak" style="background:#22c55e">➜</button>
     </div>
 
-    <div class="panel" role="region" aria-label="Detection panel">
-      <div class="small">Detected</div>
-      <div id="label" class="labelBig" aria-live="polite">—</div>
-
-      <div style="display:flex;gap:10px;align-items:center;margin-top:8px">
-        <div class="small">Confidence</div>
-        <div id="conf" class="conf">—</div>
+    <div class="overlay" id="trainOverlay">
+      <div class="ghost-text">Teach New Sign</div>
+      <div class="ghost-hand">
+        <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+          <path d="M12 2a2 2 0 0 1 2 2v7h1a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h1V4a2 2 0 0 1 2-2z"/>
+        </svg>
       </div>
+      <input type="text" class="train-input" id="customNameInput" value="Bruno">
+      <button class="train-btn" id="learnBtn">Learn Sign</button>
+      <button style="background:transparent; border:none; color:rgba(255,255,255,0.5); margin-top:15px; cursor:pointer;" onclick="toggleOverlay(false)">Cancel</button>
+    </div>
+  </div>
 
-      <div style="margin-top:12px">
-        <div class="small">Word buffer</div>
-        <div id="buffer" class="buffer" aria-live="polite"></div>
-      </div>
+  <div class="prediction-zone">
+    <div class="detecting-label">Detecting</div>
+    <div class="current-word" id="label">—</div>
+    <div class="buffer-text" id="buffer">—</div>
+  </div>
+
+  <div class="chat-area">
+    <div class="messages-list" id="chatWindow">
+      <div class="bubble them">Hi! I'm listening. Sign to me.</div>
+    </div>
+
+    <div class="input-bar">
+      <button class="action-btn btn-add" id="addSignBtn" title="Teach Custom Sign">＋</button>
+      
+      <button class="action-btn btn-mic" id="micBtn">🎤</button>
+      <input type="text" class="text-input" id="transcript" placeholder="Type message...">
+      <button class="action-btn" id="localSend" style="color:var(--primary)">➤</button>
     </div>
   </div>
 </div>
 
-<!-- mediapipe -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-
 <script>
 /* --- CONFIG --- */
-const MODEL_FILES = ['weights.json','model-weights.json','model_weights.json'];
-const INFER_FPS = 12; // target inference frequency
-const CONFIRM_CONFIDENCE = 0.7;
-const HOLD_FRAMES = 8;
-const PAUSE_FRAMES = 6;
-const SMOOTH_WINDOW = 5;
+const INFER_FPS = 15;
+const LETTER_HOLD_MS = 1500; // Faster for demo
+let rafId = null;
 
 /* --- DOM --- */
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-const startBtn = document.getElementById('start');
-const stopBtn = document.getElementById('stop');
-const clearBtn = document.getElementById('clear');
+const startBtn = document.getElementById('startBtn');
+const clearBtn = document.getElementById('clearBufferBtn');
+const sendBtn = document.getElementById('sendBtn');
 const labelEl = document.getElementById('label');
-const confEl = document.getElementById('conf');
 const bufferEl = document.getElementById('buffer');
-const permHelp = document.getElementById('permHelp');
+const chatWindow = document.getElementById('chatWindow');
+const trainOverlay = document.getElementById('trainOverlay');
 
-let weights = null;
-let classes = null;
+/* --- STATE --- */
+let weights=null, classes=null;
+let recentPreds = [];
+let wordBuffer = '';
+let candidateLabel = null;
+let candidateStart = 0;
+let lastAppendTime = 0;
+let lastTick = 0;
 
-/* --- small helpers --- */
-function postDetection(payload){
-  // notify parent (useful for Framer wrapper)
-  try{ parent.postMessage({type:'DETECTION', payload}, '*'); }catch(e){}
-}
+// WIZARD OF OZ STATE
+let canDetectCustom = false;
+let customSignName = "Bruno";
 
-/* --- load weights (lazy) --- */
-async function loadWeights(){
-  for(const name of MODEL_FILES){
-    try{
-      const res = await fetch(name);
-      if(!res.ok) continue;
-      const j = await res.json();
-      weights = j;
-      classes = j.classes || null;
-      console.log('Loaded weights from', name);
-      return;
-    }catch(e){ console.warn('weights load fail', name, e); }
+/* --- 1. SETUP --- */
+(async function loadW(){
+  const FILES = ['weights.json','model-weights.json'];
+  for(const n of FILES){
+    try{ const r=await fetch(n); if(r.ok){ const j=await r.json(); weights=j; classes=j.classes; return;} }catch(e){}
   }
-  console.warn('No weights found; model features disabled.');
-}
-loadWeights();
+})();
 
-/* --- model math utilities (kept from original) --- */
-function denseForward(x,kernel,bias){
-  const inD=kernel.length, outD=kernel[0].length;
-  const out = new Float32Array(outD);
-  for(let j=0;j<outD;j++){
-    let s=0; for(let i=0;i<inD;i++) s += x[i]*kernel[i][j];
-    s += bias[j]; out[j]=s;
-  } return out;
-}
-function relu(x){ for(let i=0;i<x.length;i++) if(x[i]<0) x[i]=0; return x; }
-function softmax(x){ let max=-Infinity; for(let i=0;i<x.length;i++) if(x[i]>max) max=x[i]; let s=0; const out=new Float32Array(x.length); for(let i=0;i<x.length;i++){ out[i]=Math.exp(x[i]-max); s+=out[i]; } for(let i=0;i<x.length;i++) out[i]/=s; return out; }
-function argmax(a){ let b=0; for(let i=1;i<a.length;i++) if(a[i]>a[b]) b=i; return b; }
-
-/* --- mediapipe hands setup --- */
 const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
-hands.setOptions({ maxNumHands:2, modelComplexity:1, selfieMode:true, minDetectionConfidence:0.5, minTrackingConfidence:0.5 });
+hands.setOptions({ maxNumHands:1, modelComplexity:0, minDetectionConfidence:0.5, minTrackingConfidence:0.5 });
 hands.onResults(onResults);
 
-/* --- state for smoothing/hold logic --- */
-let recentPreds = [];
-let holdFrames=0, pauseFrames=0;
-let lastVoted=null, lastConfirmed=null;
-let wordBuffer = '';
-
-/* --- camera control --- */
+/* --- 2. CAMERA --- */
 startBtn.onclick = async () => {
-  permHelp.style.display='none';
   try{
-    const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
     video.srcObject = stream;
     await video.play();
+    canvas.width = 640; canvas.height = 640;
+    startBtn.style.background = "#ef4444"; startBtn.innerText = "■";
     lastTick = performance.now();
-    requestAnimationFrame(tick);
-  }catch(e){
-    permHelp.style.display='block';
-    alert('Camera error: '+ (e.message || e.name));
-  }
+    rafId = requestAnimationFrame(tick);
+  }catch(e){ alert("Camera Error: " + e.message); }
 };
-stopBtn.onclick = ()=>{ if(video.srcObject){ video.srcObject.getTracks().forEach(t=>t.stop()); video.srcObject=null; } };
-clearBtn.onclick = ()=>{ wordBuffer=''; bufferEl.innerText=''; };
 
-/* --- tick throttled to INFER_FPS --- */
-let lastTick = 0;
-async function tick(ts){
-  if(!video) return;
-  requestAnimationFrame(tick);
-  const dt = ts - lastTick;
-  if(dt < (1000/INFER_FPS)) return;
-  lastTick = ts;
-  if(video.readyState >= 2) await hands.send({image: video});
+/* --- 3. WIZARD OF OZ LOGIC (The Add Button) --- */
+document.getElementById('addSignBtn').onclick = () => toggleOverlay(true);
+document.getElementById('learnBtn').onclick = () => {
+  customSignName = document.getElementById('customNameInput').value || "Bruno";
+  // Show Loading Spinner (Fake)
+  document.getElementById('learnBtn').innerText = "Learning...";
+  setTimeout(() => {
+    canDetectCustom = true; // ENABLE THE MAGIC
+    toggleOverlay(false);
+    document.getElementById('learnBtn').innerText = "Learn Sign";
+    addChatBubble(`System: Learned new sign '${customSignName}'`, 'them');
+  }, 1500);
+};
+
+function toggleOverlay(show){
+  if(show) trainOverlay.classList.add('active');
+  else trainOverlay.classList.remove('active');
 }
 
-/* --- rendering & inference --- */
-function onResults(results){
-  // canvas sizing responsive
-  canvas.width = canvas.clientWidth;
-  canvas.height = canvas.clientHeight;
+/* --- 4. MAIN LOOP --- */
+async function tick(ts){
+  rafId = requestAnimationFrame(tick);
+  if(ts - lastTick < (1000/INFER_FPS)) return;
+  lastTick = ts;
+  if(video.readyState >= 2) await hands.send({ image: video });
+}
 
-  ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height);
-  // mirror draw
-  ctx.translate(canvas.width,0); ctx.scale(-1,1);
-  if(video.readyState >= 2) ctx.drawImage(video,0,0,canvas.width,canvas.height);
+/* --- 5. PREDICTION ENGINE --- */
+function onResults(results){
+  const w = canvas.width, h = canvas.height;
+  ctx.save();
+  ctx.clearRect(0, 0, w, h);
+  ctx.translate(w, 0); ctx.scale(-1, 1); // Mirror
+  if(video.readyState>=2) ctx.drawImage(video, 0, 0, w, h);
 
   if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
-    const handsArr = results.multiHandLandmarks;
-    drawLandmarks(handsArr);
-    const all_hands_px = handsArr.map(h => h.map(lm => ({x: lm.x * canvas.width, y: lm.y * canvas.height})));
-    const vec = twoHandsXYToVector(all_hands_px);
-    if(weights){
-      let out0 = denseForward(vec, weights.layers[0].kernel, weights.layers[0].bias); out0 = relu(out0);
-      let out1 = denseForward(out0, weights.layers[1].kernel, weights.layers[1].bias); out1 = relu(out1);
-      let out2 = denseForward(out1, weights.layers[2].kernel, weights.layers[2].bias);
-      const probs = softmax(out2); const idx = argmax(probs);
-      const label = (weights.classes && weights.classes[idx]) ? weights.classes[idx] : String(idx);
-      const conf = probs[idx];
+    const hand = results.multiHandLandmarks[0];
+    drawHand(hand, w, h);
 
-      recentPreds.push({label,conf});
-      if(recentPreds.length > SMOOTH_WINDOW) recentPreds.shift();
-
-      // majority vote
-      const counts = {}; for(const p of recentPreds) counts[p.label] = (counts[p.label]||0)+1;
-      let voted = recentPreds[recentPreds.length-1].label; let maxc=0;
-      for(const k in counts) if(counts[k] > maxc){ maxc = counts[k]; voted = k; }
-
-      labelEl.innerText = voted;
-      confEl.innerText = conf.toFixed(3);
-
-      if(conf >= CONFIRM_CONFIDENCE){
-        if(voted === lastVoted) holdFrames++; else { holdFrames = 1; lastVoted = voted; }
-        pauseFrames = 0;
-      } else {
-        pauseFrames++; holdFrames = 0; lastVoted = null;
+    // --- WIZARD OF OZ CHECK ---
+    // If we trained the sign, AND hand is visible, assume it's the custom sign
+    // This is a "Safety" feature for the demo so it never fails.
+    if(canDetectCustom){
+       labelEl.innerText = "★ " + customSignName;
+       labelEl.style.color = "#007AFF"; // Blue text for custom sign
+       handleBuffer(customSignName);
+    } 
+    // ELSE: Run normal prediction
+    else if(weights){
+      const pred = predictNeuralNet(hand, w, h);
+      if(pred){
+        labelEl.innerText = pred;
+        labelEl.style.color = "#1f2937";
+        handleBuffer(pred);
       }
-
-      if(holdFrames >= HOLD_FRAMES && lastConfirmed !== voted){
-        wordBuffer += voted;
-        bufferEl.innerText = wordBuffer;
-        lastConfirmed = voted;
-        holdFrames = 0;
-        // notify parent
-        postDetection({label:voted, confidence:conf, time:Date.now()});
-      }
-      if(pauseFrames >= PAUSE_FRAMES){
-        lastConfirmed = null;
-      }
-    } else {
-      // no weights: show placeholder
-      labelEl.innerText = '—';
-      confEl.innerText = '—';
     }
   } else {
-    // no hands
-    pauseFrames++; holdFrames=0; lastVoted=null;
-    if(pauseFrames >= PAUSE_FRAMES) lastConfirmed=null;
+    labelEl.innerText = "—";
   }
   ctx.restore();
 }
 
-/* --- utilities for vectorization & drawing (kept mostly intact) --- */
-function twoHandsXYToVector(all_hands_px){
-  if(all_hands_px.length >= 2) all_hands_px = all_hands_px.sort((a,b)=>a[0].x - b[0].x);
-  function singleVec(pxs){
-    const wrist = pxs[0];
-    const pts=[]; let maxd=0;
-    for(let i=0;i<pxs.length;i++){
-      const dx = pxs[i].x - wrist.x, dy = pxs[i].y - wrist.y;
-      pts.push(dx); pts.push(dy);
-      const d = Math.hypot(dx,dy); if(d>maxd) maxd=d;
-    }
-    if(maxd===0) maxd=1;
-    const out = new Float32Array(42);
-    for(let i=0;i<21;i++){ out[i*2] = pts[i*2]/maxd; out[i*2+1] = pts[i*2+1]/maxd; }
-    return out;
-  }
-  const v1 = (all_hands_px.length>=1) ? singleVec(all_hands_px[0]) : new Float32Array(42);
-  const v2 = (all_hands_px.length>=2) ? singleVec(all_hands_px[1]) : new Float32Array(42);
-  const concat = new Float32Array(84); concat.set(v1,0); concat.set(v2,42);
-  return concat;
-}
-
-function drawLandmarks(handsArr){
-  ctx.fillStyle='rgba(0,200,255,0.9)'; ctx.strokeStyle='rgba(0,255,170,0.9)'; ctx.lineWidth=2;
-  const connections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20]];
-  ctx.beginPath();
-  for(const hand of handsArr){
-    for(const c of connections){
-      const a = hand[c[0]], b = hand[c[1]];
-      ctx.moveTo(canvas.width - a.x*canvas.width, a.y*canvas.height);
-      ctx.lineTo(canvas.width - b.x*canvas.width, b.y*canvas.height);
-    }
-  }
-  ctx.stroke();
-  for(const hand of handsArr){
-    for(let i=0;i<hand.length;i++){
-      const p = hand[i];
-      ctx.beginPath(); ctx.arc(canvas.width - p.x*canvas.width, p.y*canvas.height, i===8?6:4,0,Math.PI*2); ctx.fill();
+/* --- 6. HELPERS --- */
+function handleBuffer(char){
+  const now = performance.now();
+  if(char !== candidateLabel){
+    candidateLabel = char; candidateStart = now;
+  } else if (now - candidateStart > LETTER_HOLD_MS){
+    // Lock it in
+    if(now - lastAppendTime > 500){ // Debounce
+      wordBuffer += char;
+      bufferEl.innerText = wordBuffer;
+      lastAppendTime = now;
+      // Visual Feedback
+      bufferEl.style.transform = "scale(1.2)";
+      setTimeout(()=> bufferEl.style.transform="scale(1)", 100);
     }
   }
 }
 
-/* --- friendly detection of permission state (simple) --- */
-(async function checkPermission(){
-  if(!navigator.permissions) return;
+function predictNeuralNet(hand, w, h){
+  // 1. Vectorize
+  const vec = new Float32Array(42);
+  let maxd=0;
+  // Normalize to Wrist (0)
+  for(let i=0; i<21; i++){
+     const dx = hand[i].x - hand[0].x;
+     const dy = hand[i].y - hand[0].y;
+     const d = Math.hypot(dx,dy);
+     if(d>maxd) maxd=d;
+     vec[i*2] = dx; vec[i*2+1] = dy;
+  }
+  if(maxd>0) for(let i=0; i<42; i++) vec[i] /= maxd;
+
+  // 2. Forward Pass
   try{
-    const s = await navigator.permissions.query({name:'camera'}).catch(()=>null);
-    if(s && s.state === 'denied') permHelp.style.display='block';
-  }catch(e){}
-})();
+    let x = vec;
+    // Layer 1
+    let k = weights.layers[0].kernel, b = weights.layers[0].bias;
+    let out = new Float32Array(k[0].length);
+    for(let j=0; j<out.length; j++){ let s=0; for(let i=0; i<42; i++) s+=x[i]*k[i][j]; out[j] = s+b[j] > 0 ? s+b[j] : 0; } // Relu
+    
+    // Layer 2
+    x = out; k = weights.layers[1].kernel; b = weights.layers[1].bias;
+    out = new Float32Array(k[0].length);
+    for(let j=0; j<out.length; j++){ let s=0; for(let i=0; i<x.length; i++) s+=x[i]*k[i][j]; out[j] = s+b[j] > 0 ? s+b[j] : 0; } // Relu
+
+    // Layer 3 (Output)
+    x = out; k = weights.layers[2].kernel; b = weights.layers[2].bias;
+    out = new Float32Array(k[0].length);
+    let maxV = -Infinity;
+    for(let j=0; j<out.length; j++){ let s=0; for(let i=0; i<x.length; i++) s+=x[i]*k[i][j]; out[j]=s+b[j]; if(out[j]>maxV) maxV=out[j]; }
+
+    // Softmax & Argmax
+    let idx=0;
+    for(let j=0; j<out.length; j++){ if(out[j]===maxV) idx=j; }
+    
+    return classes[idx] || String(idx);
+  } catch(e){ return null; }
+}
+
+function drawHand(hand, w, h){
+  ctx.strokeStyle = "rgba(255,255,255,0.8)"; ctx.lineWidth = 3;
+  ctx.fillStyle = "#007AFF";
+  const joints = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20]];
+  for(let j of joints){
+    ctx.beginPath(); ctx.moveTo(hand[j[0]].x*w, hand[j[0]].y*h); ctx.lineTo(hand[j[1]].x*w, hand[j[1]].y*h); ctx.stroke();
+  }
+  for(let p of hand){
+    ctx.beginPath(); ctx.arc(p.x*w, p.y*h, 4, 0, 2*Math.PI); ctx.fill();
+  }
+}
+
+/* --- 7. CHAT LOGIC --- */
+function addChatBubble(text, who){
+  const div = document.createElement('div');
+  div.className = `bubble ${who}`;
+  div.innerText = text;
+  chatWindow.appendChild(div);
+  chatWindow.scrollTop = chatWindow.scrollHeight;
+}
+
+sendBtn.onclick = () => { // Send Sign to Chat
+  if(!wordBuffer) return;
+  addChatBubble(wordBuffer, 'me');
+  speak(wordBuffer);
+  wordBuffer = ""; bufferEl.innerText = "—";
+};
+
+clearBtn.onclick = () => { wordBuffer=""; bufferEl.innerText="—"; };
+
+document.getElementById('localSend').onclick = () => {
+  const txt = document.getElementById('transcript').value.trim();
+  if(!txt) return;
+  addChatBubble(txt, 'them');
+  document.getElementById('transcript').value = "";
+}
+
+function speak(txt){ try{ const u=new SpeechSynthesisUtterance(txt); speechSynthesis.speak(u); }catch(e){} }
+
 </script>
 </body>
 </html>
